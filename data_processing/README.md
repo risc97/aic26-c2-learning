@@ -1,4 +1,5 @@
-# This page contains instructions on how to prepare data to train C2LIP. The general process is as below:
+# Instructions on C2LIP training data preparation
+
 1. Download CC3m images, and new captions from [DreamLIP](https://github.com/ant-research/DreamLIP). Please note, that in our work we use the "shortLLA_captions" captions instead of the long ones in the DreamLIP paper.
 2. Extract concepts from captions
 3. (optional) Pack data as webdataset (useful when transferring data between machines)

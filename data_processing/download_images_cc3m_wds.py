@@ -1,72 +1,124 @@
 from PIL import Image
 import io
-from urllib.request import urlopen
 import string
 import random
+import json
 from pathlib import Path
 from datasets import load_dataset
 from tqdm.auto import tqdm
 from argparse import ArgumentParser
 import pickle as pkl
-import csv
 from copy import deepcopy
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="PIL")
 
 FILENAME_LENGTH = 8
+NUM_SHARDS = 576
+SHARD_URL_FMT = "https://huggingface.co/datasets/pixparse/cc3m-wds/resolve/main/cc3m-train-{i:04d}.tar"
+
 
 def get_random_string(length=FILENAME_LENGTH):
-    random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-    return random_string
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
 
-def save_image(image: Image.Image, image_root_dir: str|Path, random_string: str):
-    # split the string into 4 parts
+def save_image(image: Image.Image, image_root_dir: str | Path, random_string: str):
     NUM_SPLITS = 4
     n = len(random_string)
     part_n = n // NUM_SPLITS
-    # construct directory & file path
     dir_path = Path(image_root_dir)
-    for i in range(NUM_SPLITS-1): # only construct dir from the first 3 parts
-        dir_path = dir_path / random_string[i*part_n:(i+1)*part_n]
+    for i in range(NUM_SPLITS - 1):
+        dir_path = dir_path / random_string[i * part_n:(i + 1) * part_n]
     dir_path.mkdir(exist_ok=True, parents=True)
     file_path = dir_path / f"{random_string}.jpg"
-    # save image
     image.save(str(file_path))
     return str(file_path.relative_to(image_root_dir))
 
 
-def download_images(image_root_dir: str|Path, local_webdataset_dir: str|Path = None) -> dict[str, dict[str, str]]:
-    if local_webdataset_dir is None:
-        base_url = "https://huggingface.co/datasets/pixparse/cc3m-wds/resolve/main/cc3m-train-{i:04d}.tar"
-        urls = [base_url.format(i=i) for i in range(576)]
-    else:
-        # make sure only the training tar files are stored in this directory
-        urls = f"{local_webdataset_dir}/*.tar"
-    dataset = load_dataset("webdataset", data_files={"train": urls}, split="train", streaming=True)
+def download_images(image_root_dir: str | Path) -> dict:
+    """
+    Download CC3M images shard-by-shard using the datasets library's webdataset loader
+    (which handles XetHub URL refresh). Checkpoints after every shard for resume.
+    """
+    image_root_dir = Path(image_root_dir)
+    checkpoint_path = image_root_dir / "download_checkpoint.pkl"
 
-    sampled_names = set()
-
+    # Resume from checkpoint if available
     metadata_output = {}
+    sampled_names = set()
+    processed_shards = set()
 
-    for i, row in enumerate(tqdm(dataset, desc="downloading images")):
-        image = row["jpg"]
-        url = row["json"]["url"]
+    if checkpoint_path.exists():
+        checkpoint = pkl.load(open(checkpoint_path, "rb"))
+        metadata_output = checkpoint.get("metadata", {})
+        processed_shards = set(checkpoint.get("processed_shards", set()))
+        for v in metadata_output.values():
+            sampled_names.add(Path(v["image_path"]).stem)
+        print(f"Resuming from checkpoint: {len(metadata_output)} images, {len(processed_shards)} shards done")
 
-        # sample a unique name
-        random_string = get_random_string()
-        while random_string in sampled_names:
-            random_string = get_random_string()
-        sampled_names.add(random_string)
-        # save the image
-        file_path = save_image(image, image_root_dir=image_root_dir, random_string=random_string)
+    shard_pbar = tqdm(range(NUM_SHARDS), desc="Shards", initial=len(processed_shards))
+    consecutive_failures = 0
 
-        metadata_output[i] = {
-            "image_path": file_path,
-            "url": url
-        }
+    for shard_idx in shard_pbar:
+        if shard_idx in processed_shards:
+            continue
 
-    return file_path
+        shard_url = SHARD_URL_FMT.format(i=shard_idx)
+        shard_pbar.set_postfix_str(f"{shard_idx:04d} [{len(metadata_output)} imgs]")
 
+        try:
+            # Use datasets library for streaming — it handles XetHub URL refresh
+            ds = load_dataset(
+                "webdataset",
+                data_files={"train": [shard_url]},
+                split="train",
+                streaming=True,
+            )
+
+            for row in ds:
+                image = row.get("jpg") or row.get("png") or row.get("webp")
+                if image is None:
+                    continue
+                url = row.get("json", {}).get("url", "").strip()
+                if not url:
+                    continue
+
+                # Generate unique filename
+                random_string = get_random_string()
+                while random_string in sampled_names:
+                    random_string = get_random_string()
+                sampled_names.add(random_string)
+
+                image = image.convert("RGB")
+                file_path = save_image(image, image_root_dir, random_string)
+
+                metadata_output[len(metadata_output)] = {
+                    "image_path": file_path,
+                    "url": url,
+                }
+
+            processed_shards.add(shard_idx)
+            consecutive_failures = 0
+
+        except Exception as e:
+            msg = str(e)[:120]
+            tqdm.write(f"  shard {shard_idx:04d} FAILED: {msg}  — skipping")
+            consecutive_failures += 1
+            if consecutive_failures >= 10:
+                tqdm.write(f"  {consecutive_failures} consecutive failures, stopping.")
+                break
+            continue
+
+        # Save checkpoint
+        with open(checkpoint_path, "wb") as f:
+            pkl.dump({"metadata": metadata_output, "processed_shards": list(processed_shards)}, f)
+
+    shard_pbar.close()
+    n = len(processed_shards)
+    print(f"\nDone: {len(metadata_output)} images from {n}/{NUM_SHARDS} shards ({n * 100 / NUM_SHARDS:.0f}%)")
+    if checkpoint_path.exists():
+        checkpoint_path.unlink()
+    return metadata_output
 
 
 def main():
@@ -74,55 +126,62 @@ def main():
     parser.add_argument("--hf-cache-dir", type=str, default="./data_dir/hf_cache")
     parser.add_argument("--image-dir", type=str, default="./data_dir/images")
     parser.add_argument("--output-pkl", type=str, default=None)
-    parser.add_argument("--cc3m-wds-local-path", type=str, default=None)
-    
+    parser.add_argument("--clean-start", action="store_true")
+
     args = parser.parse_args()
 
-    hf_cache_dir = args.hf_cache_dir
-    image_dir = args.image_dir
-    Path(image_dir).mkdir(exist_ok=True, parents=True)
+    image_dir = Path(args.image_dir)
+    image_dir.mkdir(exist_ok=True, parents=True)
 
-    if args.output_pkl is None:
-        pkl_file = Path(image_dir) / "cc3m_images.pkl"
-    else:
-        pkl_file = args.output_pkl
+    pkl_file = Path(args.output_pkl) if args.output_pkl else (image_dir / "cc3m_images.pkl")
+    checkpoint_path = image_dir / "download_checkpoint.pkl"
 
-    # 1. download images
-    downloaded_files = download_images(image_root_dir=image_dir, local_webdataset_dir=args.cc3m_wds_local_path)
-    print(f"number of images downloaded: {len(downloaded_files)}")
-    
-    # 2. download DreamLIP data from HF # this include ~30m samples from cc3m, cc12m and yfcc15m, thus we must filter to select on cc3m samples
-    dataset = load_dataset("qidouxiong619/dreamlip_long_captions", split="train", cache_dir=hf_cache_dir)
+    if args.clean_start:
+        for p in [checkpoint_path]:
+            if p.exists():
+                p.unlink()
+                print(f"Removed {p}")
 
-    # 3. Merge data
-    url_2_images = {}
+    # 1. Download images
+    downloaded_files = download_images(image_root_dir=image_dir)
+    print(f"Downloaded {len(downloaded_files)} images")
+
+    # 2. Load DreamLIP captions
+    print("Loading DreamLIP captions (this downloads ~60 GB of CSVs on first run)...")
+    dataset = load_dataset(
+        "qidouxiong619/dreamlip_long_captions",
+        split="train",
+        cache_dir=args.hf_cache_dir,
+    )
+    print(f"DreamLIP loaded: {len(dataset)} samples")
+
+    # 3. Merge by URL
+    url_to_path = {}
     for v in downloaded_files.values():
-        url_2_images[v["url"]] = url_2_images["image_path"]
+        url_to_path[v["url"]] = v["image_path"]
+    print(f"Unique URLs in downloaded images: {len(url_to_path)}")
 
-    image_files = {} # to store the downloaded image paths
-    
-    for ie, i in enumerate(tqdm(dataset, total=len(dataset), desc="Merging data")):
-        row = dataset[i]
+    image_files = {}
+    for row in tqdm(dataset, total=len(dataset), desc="Merging captions"):
         url = row["Image Path"]
-        if url not in url_2_images:
+        if url not in url_to_path:
             continue
-        
-        captions = deepcopy(row)
+        captions = dict(row)
         captions.pop("Image Path")
-
-        image_files[str(i)] = {
-            "image_path": url_2_images[url],
+        image_files[str(len(image_files))] = {
+            "image_path": url_to_path[url],
             "image_url": url,
-            "sample_index": i,
+            "sample_index": len(image_files),
             "captions": captions,
         }
 
     print("*******************************************************************")
-    print(f"Downloaded: {len(image_files)} images\nMissing {len(dataset) - len(image_files)} images")
+    print(f"Matched: {len(image_files)} image-caption pairs")
+    print(f"Unmatched downloaded images (URL not in DreamLIP): {len(downloaded_files) - len(image_files)}")
 
-    # save the image list
     with open(pkl_file, "wb") as fp:
         pkl.dump(image_files, fp)
+    print(f"Saved to {pkl_file}")
 
 
 if __name__ == "__main__":
