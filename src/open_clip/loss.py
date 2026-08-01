@@ -875,6 +875,7 @@ class C2LIP_Loss(nn.Module):
         total_loss = 0.
         
         ## standard SigLIP contrastive loss
+        logit_bias = logit_bias if logit_bias is not None else 0.0  # PE model has no bias
         if self.world_size > 1:
             all_image_features, all_text_features = gather_features(
                 image_features, text_features,

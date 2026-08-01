@@ -215,7 +215,7 @@ def main(args):
 
     if args.siglip:
         model_kwargs['init_logit_scale'] = np.log(10)  # different from CLIP
-        model_kwargs['init_logit_bias'] = -10
+        # init_logit_bias is model-specific — read from model config JSON, don't hardcode
         model_kwargs['force_siglip_preprocess'] = args.force_siglip_preprocess
     if args.output_tokens:
         model_kwargs['output_tokens'] = True

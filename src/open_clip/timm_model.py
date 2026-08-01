@@ -41,11 +41,13 @@ class TimmModel(nn.Module):
             drop_path=None,
             patch_drop=None,
             pretrained=False,
+            output_tokens=False,
     ):
         super().__init__()
         if timm is None:
             raise RuntimeError("Please `pip install timm` to use timm models.")
         self.image_size = to_2tuple(image_size)
+        self.output_tokens = output_tokens
 
         # setup kwargs that may not be common across all models
         timm_kwargs = {}
@@ -87,6 +89,10 @@ class TimmModel(nn.Module):
                 reset_kwargs = dict(global_pool=pool) if pool else {}
                 self.trunk.reset_classifier(0, **reset_kwargs)
             prev_chs = self.trunk.num_features
+
+        # Cache forward methods for output_tokens support (before head replaces them)
+        self._trunk_forward_head = self.trunk.forward_head if hasattr(self.trunk, 'forward_head') else None
+        self._trunk_forward_features = self.trunk.forward_features if hasattr(self.trunk, 'forward_features') else None
 
         head_layers = OrderedDict()
 
@@ -147,6 +153,12 @@ class TimmModel(nn.Module):
             logging.warning('grad checkpointing not supported for this timm image tower, continuing without...')
 
     def forward(self, x):
+        if self.output_tokens:
+            # Capture patch tokens via forward_features, then use full trunk forward
+            tokens = self.trunk.forward_features(x)
+            x = self.trunk(x)        # normal forward: features + pool + head
+            x = self.head(x)
+            return x, tokens
         x = self.trunk(x)
         x = self.head(x)
         return x

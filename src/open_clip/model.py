@@ -127,6 +127,7 @@ def _build_vision_tower(
             patch_drop=vision_cfg.patch_dropout if vision_cfg.patch_dropout > 0 else None,
             embed_dim=embed_dim,
             image_size=vision_cfg.image_size,
+            output_tokens=vision_cfg.output_tokens if hasattr(vision_cfg, 'output_tokens') else False,
         )
     elif isinstance(vision_cfg.layers, (tuple, list)):
         vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
@@ -350,10 +351,9 @@ class CLIP(nn.Module):
             out_dict = {
                 "image_features": image_features,
                 "text_features": text_features,
-                "logit_scale": self.logit_scale.exp()
+                "logit_scale": self.logit_scale.exp(),
+                "logit_bias": self.logit_bias,  # None for models without bias (e.g., PE)
             }
-            if self.logit_bias is not None:
-                out_dict['logit_bias'] = self.logit_bias
             if self.output_tokens:
                 out_dict['image_tokens'] = image_tokens
                 out_dict['text_tokens'] = text_tokens
@@ -509,10 +509,9 @@ class CustomTextCLIP(nn.Module):
             # text encoding is implemented within this CLIP model, handle here
             self.visual.output_tokens = self.output_tokens
         if self.output_tokens and vision_cfg.get("timm_model_name", None) is not None:
-            print("SET UP TimmModel to output visual tokens")
-            # TimmModel vision encoder needs special handling
-            self.visual.trunk.attn_pool.forward = att_pool_forward_wrapper(self.visual.trunk.attn_pool)
-            self.visual.trunk.head_drop = torch.nn.Identity()
+            # TimmModel handles output_tokens via its own forward method —
+            # patch tokens are extracted via forward_features() instead of monkey-patching attn_pool
+            pass
         if hasattr(self.text, "output_tokens"):
             # only flag the vision transformer to return visual tokens
             # text encoding is implemented within this CLIP model, handle here
@@ -599,10 +598,9 @@ class CustomTextCLIP(nn.Module):
             out_dict = {
                 "image_features": image_features,
                 "text_features": text_features,
-                "logit_scale": self.logit_scale.exp()
+                "logit_scale": self.logit_scale.exp(),
+                "logit_bias": self.logit_bias,  # None for models without bias (e.g., PE)
             }
-            if self.logit_bias is not None:
-                out_dict['logit_bias'] = self.logit_bias
             if self.output_tokens:
                 out_dict['image_tokens'] = image_tokens
                 out_dict['text_tokens'] = text_tokens
