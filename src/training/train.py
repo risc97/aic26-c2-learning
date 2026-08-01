@@ -14,6 +14,11 @@ try:
 except ImportError:
     wandb = None
 
+try:
+    from tqdm.auto import tqdm
+except ImportError:
+    tqdm = None
+
 from open_clip import get_input_dtype, CLIP, CustomTextCLIP
 from .distributed import is_master
 from .zero_shot import zero_shot_eval
@@ -84,7 +89,13 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
     data_time_m = AverageMeter()
     end = time.time()
 
-    # Optimize by directly setting thresholds based on conditions
+    # tqdm progress bar on master rank
+    if is_master(args) and tqdm is not None:
+        pbar = tqdm(total=num_batches_per_epoch, desc=f"Epoch {epoch+1}/{args.epochs}", unit="batch",
+                     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}")
+    else:
+        pbar = None
+
     for i, batch in enumerate(dataloader):
         i_accum = i // args.accum_freq
         step = num_batches_per_epoch * epoch + i_accum
@@ -267,6 +278,19 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         batch_time_m.update(time.time() - end)
         end = time.time()
         batch_count = i_accum + 1
+
+        # --- tqdm progress update (every effective step) ---
+        if pbar is not None and (i + 1) % args.accum_freq == 0:
+            pbar.update(1)
+            # Build compact postfix string with current losses
+            postfix_parts = []
+            for loss_name, loss_m in sorted(losses_m.items()):
+                postfix_parts.append(f"{loss_name[:4]}:{loss_m.val:.3f}")
+            postfix_parts.append(f"lr:{optimizer.param_groups[0]['lr']:.1e}")
+            postfix_parts.append(f"σ:{logit_scale.item():.1f}")
+            pbar.set_postfix_str(" ".join(postfix_parts))
+
+        # --- Detailed logging (every N steps, same as before) ---
         if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
             batch_size = len(images)
             num_samples = batch_count * batch_size * args.accum_freq * args.world_size
@@ -322,7 +346,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             batch_time_m.reset()
             data_time_m.reset()
     # end for
-    return 
+
+    if pbar is not None:
+        pbar.close()
+    return
 
 
 def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
@@ -348,8 +375,9 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
         cumulative_loss = 0.0
         cumulative_gen_loss = 0.0
         all_image_features, all_text_features = [], []
+        eval_pbar = tqdm(dataloader, desc="Evaluating", unit="batch") if tqdm is not None else dataloader
         with torch.no_grad():
-            for i, batch in enumerate(dataloader):
+            for i, batch in enumerate(eval_pbar):
                 images, texts = batch
                 images = images.to(device=device, dtype=input_dtype, non_blocking=True)
                 texts = texts.to(device=device, non_blocking=True)
@@ -378,6 +406,11 @@ def evaluate(model, data, epoch, args, tb_writer=None, tokenizer=None):
 
                 cumulative_loss += total_loss * batch_size
                 num_samples += batch_size
+
+                # Update tqdm postfix with running loss
+                if isinstance(eval_pbar, tqdm.__class__):
+                    eval_pbar.set_postfix_str(f"loss:{cumulative_loss/num_samples:.4f}")
+
                 if is_master(args) and (i % 100) == 0:
                     logging.info(
                         f"Eval Epoch: {epoch} [{num_samples} / {samples_per_val}]\t"
