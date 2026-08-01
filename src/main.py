@@ -117,6 +117,11 @@ def main(args):
     args.log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(args.log_path, args.log_level)
 
+    # Redirect Python warnings to log file so they don't clutter the TQDM bar
+    import warnings
+    warnings.filterwarnings("ignore", category=FutureWarning, module="timm")
+    logging.captureWarnings(True)
+
     # Setup wandb, tensorboard, checkpoint logging
     args.wandb = 'wandb' in args.report_to or 'all' in args.report_to
     args.tensorboard = 'tensorboard' in args.report_to or 'all' in args.report_to

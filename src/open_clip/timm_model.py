@@ -154,9 +154,10 @@ class TimmModel(nn.Module):
 
     def forward(self, x):
         if self.output_tokens:
-            # Capture patch tokens via forward_features, then use full trunk forward
-            tokens = self.trunk.forward_features(x)
-            x = self.trunk(x)        # normal forward: features + pool + head
+            # Single forward_features — share activations between tokens and pooled output
+            x = self.trunk.forward_features(x)
+            tokens = x
+            x = self.trunk.forward_head(x)
             x = self.head(x)
             return x, tokens
         x = self.trunk(x)

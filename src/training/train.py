@@ -219,7 +219,8 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
                             model_out.pop("text_tokens", None)
 
                         model_out["nounphrases_features"] = nounphrases_features
-                        
+                        model_out["nounphrases_indices"] = accum_nounphrases_indices[j]
+
                     inputs_no_accum = {}
                     inputs_no_accum["logit_scale"] = logit_scale = model_out.pop("logit_scale")
                     if "logit_bias" in model_out:

@@ -1,6 +1,6 @@
 # [HCMC AIC 2026] Concept-centric learning
 
-This repository is used for concept-centric finetuning of joint-embedding models, and to explore the applicability of this method beyond SigLIP, used in the original paper. The model being used is Meta's **[Perception Encoder](https://ai.meta.com/research/publications/perception-encoder-the-best-visual-embeddings-are-not-at-the-output-of-the-network/)** for its better performance on zero-shot retrieval compared to SigLIP or SigLIP2.
+This repository is used for concept-centric finetuning of joint-embedding models and to explore the applicability of this method beyond SigLIP, which is used in the original paper. In this project we experiment on SigLIP's successor **[SigLIP2](https://arxiv.org/abs/2502.14786)**, Meta's **[Perception Encoder](https://ai.meta.com/research/publications/perception-encoder-the-best-visual-embeddings-are-not-at-the-output-of-the-network/)** for their better performance on base zero-shot retrieval performance, and plan to experiment on more models in the future.
 
 The codebase is adapted from the implementation of the original paper **["No Hard Negatives Required: Concept Centric Learning Leads to Compositionality without Degrading Zero-shot Capabilities of Contrastive Models"](https://arxiv.org/abs/2603.25722)** by *H. X. Pham*, *D. Hoffmann*, *R. Guerrero* and *B. Martinez*. The sections below are also from the original README.
 

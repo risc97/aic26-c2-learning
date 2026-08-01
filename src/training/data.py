@@ -784,12 +784,12 @@ class CC3m_NP_PKL_Dataset(Dataset):
         image_path = str(self.image_dir_path / sample["image_path"])
         image = self.transforms(Image.open(image_path).convert("RGB"))
 
-        caption = sample["captions"]["shortLLA_captions"]
-        caption = self.tokenize(caption)[0]
+        caption_text = sample["captions"]["shortLLA_captions"]
+        caption = self.tokenize(caption_text)[0]
 
         nounphrases = sample["nounphrases"]
         if not nounphrases:
-            nounphrases = [caption]
+            nounphrases = [caption_text]
         nounphrases = self.tokenize(nounphrases)
         
         return image, [caption, nounphrases]
