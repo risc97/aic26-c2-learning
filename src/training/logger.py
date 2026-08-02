@@ -1,5 +1,26 @@
 import logging
 
+try:
+    from tqdm.auto import tqdm
+    _HAS_TQDM = True
+except ImportError:
+    _HAS_TQDM = False
+
+
+class TqdmLoggingHandler(logging.StreamHandler):
+    """Handler that writes log messages through tqdm.write() to avoid breaking progress bars."""
+
+    def __init__(self):
+        super().__init__()
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
 
 def setup_logging(log_file, level, include_host=False):
     if include_host:
@@ -15,7 +36,11 @@ def setup_logging(log_file, level, include_host=False):
     for logger in loggers:
         logger.setLevel(level)
 
-    stream_handler = logging.StreamHandler()
+    # Use tqdm.write for console output so it doesn't break the progress bar
+    if _HAS_TQDM:
+        stream_handler = TqdmLoggingHandler()
+    else:
+        stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
     logging.root.addHandler(stream_handler)
 

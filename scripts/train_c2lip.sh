@@ -96,6 +96,7 @@ EOF
 
 echo "Notes saved to $RUN_DIR/notes.txt"
 
+PYTHONWARNINGS="ignore::FutureWarning" \
 torchrun --nproc_per_node 1 \
     src/main.py \
     --model "$MODEL" \
@@ -127,5 +128,6 @@ torchrun --nproc_per_node 1 \
     --xac-loss \
     --xac-loss-scale "$XAC_LOSS_SCALE" \
     --name "$RUN_NAME" \
+    --log-every-n-steps 20 \
     --delete-previous-checkpoint \
     $([ $TORCH_COMPILE -eq 1 ] && echo "--torchcompile")

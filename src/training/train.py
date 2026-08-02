@@ -280,55 +280,42 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
         end = time.time()
         batch_count = i_accum + 1
 
+        # --- Update loss trackers on every effective step (for live tqdm postfix) ---
+        batch_size = len(images)
+        for key, val in losses.items():
+            if key not in losses_m:
+                losses_m[key] = AverageMeter()
+            losses_m[key].update(val.item(), batch_size)
+
         # --- tqdm progress update (every effective step) ---
         if pbar is not None and (i + 1) % args.accum_freq == 0:
             pbar.update(1)
-            # Build compact postfix string with current losses
-            postfix_parts = []
-            for loss_name, loss_m in sorted(losses_m.items()):
-                postfix_parts.append(f"{loss_name[:4]}:{loss_m.val:.3f}")
-            postfix_parts.append(f"lr:{optimizer.param_groups[0]['lr']:.1e}")
-            postfix_parts.append(f"σ:{logit_scale.item():.1f}")
+            postfix_parts = [f"{name[:4]}:{m.val:.1f}" for name, m in sorted(losses_m.items())]
+            postfix_parts.append(f"lr:{optimizer.param_groups[0]['lr']:.0e}")
+            postfix_parts.append(f"σ:{logit_scale.item():.0f}")
             pbar.set_postfix_str(" ".join(postfix_parts))
 
-        # --- Detailed logging (every N steps, same as before) ---
+        # --- Detailed logging (every N steps) ---
         if is_master(args) and (i_accum % args.log_every_n_steps == 0 or batch_count == num_batches_per_epoch):
-            batch_size = len(images)
             num_samples = batch_count * batch_size * args.accum_freq * args.world_size
             samples_per_epoch = dataloader.num_samples
             percent_complete = 100.0 * batch_count / num_batches_per_epoch
-
-            # NOTE loss is coarsely sampled, just master node and per log update
-            for key, val in losses.items():
-                if key not in losses_m:
-                    losses_m[key] = AverageMeter()
-                losses_m[key].update(val.item(), batch_size)
-                
-            logit_scale_scalar = logit_scale.item()
-            loss_log = " ".join(
-                [
-                    f"{loss_name.capitalize()}: {loss_m.val:#.5g} ({loss_m.avg:#.5g})" 
-                    for loss_name, loss_m in losses_m.items()
-                ]
-            )
-            samples_per_second = args.accum_freq * args.batch_size * args.world_size / batch_time_m.val
-            samples_per_second_per_gpu = args.accum_freq * args.batch_size / batch_time_m.val
+            sps = args.accum_freq * args.batch_size * args.world_size / batch_time_m.val
+            loss_str = " ".join(f"{n[:3]}:{m.val:.1f}|{m.avg:.1f}" for n, m in sorted(losses_m.items()))
             logging.info(
-                f"Train Epoch: {epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} ({percent_complete:.0f}%)] "
-                f"Data (t): {data_time_m.avg:.3f} "
-                f"Batch (t): {batch_time_m.avg:.3f}, {samples_per_second:#g}/s, {samples_per_second_per_gpu:#g}/s/gpu "
-                f"LR: {optimizer.param_groups[0]['lr']:5f} "
-                f"Logit Scale: {logit_scale_scalar:.3f} " + loss_log
+                f"E{epoch} [{num_samples:>{sample_digits}}/{samples_per_epoch} {percent_complete:.0f}%] "
+                f"{loss_str}  lr:{optimizer.param_groups[0]['lr']:.1e}  σ:{logit_scale.item():.1f}  "
+                f"{sps:.1f}s/s"
             )
 
-            # Save train loss / etc. Using non avg meter values as loggers have their own smoothing
+            # Save train loss / etc. for tensorboard/wandb
             log_data = {
                 "data_time": data_time_m.val,
                 "batch_time": batch_time_m.val,
-                "samples_per_second": samples_per_second,
-                "samples_per_second_per_gpu": samples_per_second_per_gpu,
-                "scale": logit_scale_scalar,
-                "lr": optimizer.param_groups[0]["lr"]
+                "samples_per_second": args.accum_freq * args.batch_size * args.world_size / batch_time_m.val,
+                "samples_per_second_per_gpu": args.accum_freq * args.batch_size / batch_time_m.val,
+                "scale": logit_scale.item(),
+                "lr": optimizer.param_groups[0]["lr"],
             }            
             log_data.update({name:val.val for name,val in losses_m.items()})
 
