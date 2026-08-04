@@ -363,6 +363,18 @@ def parse_args(args):
         help="Enable static graph optimization for DDP in PyTorch >= 1.11.",
     )
     parser.add_argument(
+        "--fsdp",
+        default=False,
+        action="store_true",
+        help="Use Fully Sharded Data Parallel (FSDP) instead of DDP for training."
+    )
+    parser.add_argument(
+        "--fsdp-cpu-offload",
+        default=False,
+        action="store_true",
+        help="Offload FSDP parameters and optimizer states to CPU (for very large models)."
+    )
+    parser.add_argument(
         "--no-set-device-rank",
         default=False,
         action="store_true",

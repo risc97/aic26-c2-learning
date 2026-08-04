@@ -306,14 +306,51 @@ def main(args):
                 f.write(f"{name}: {val}\n")
 
     if args.distributed and not args.horovod:
-        if args.use_bn_sync:
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        ddp_args = {}
-        if args.ddp_static_graph:
-            # this doesn't exist in older PyTorch, arg only added if enabled
-            ddp_args['static_graph'] = True
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
-    
+        if args.fsdp:
+            # FSDP requires uniform dtype and non-scalar params
+            for p in model.parameters():
+                p.data = p.data.to(torch.bfloat16)
+                if p.ndim == 0:
+                    p.data = p.data.unsqueeze(0)
+
+            from torch.distributed.fsdp import (
+                FullyShardedDataParallel as FSDP,
+                ShardingStrategy,
+                MixedPrecision,
+                BackwardPrefetch,
+            )
+            from torch.distributed.fsdp.api import CPUOffload
+            from open_clip.transformer import ResidualAttentionBlock
+
+            def _fsdp_wrap_policy(module, recurse, nonwrapped_numel):
+                return isinstance(module, ResidualAttentionBlock)
+
+            mixed_precision = MixedPrecision(
+                param_dtype=None,  # skip param recast — avoids fp32/bf16 flat_param errors
+                reduce_dtype=torch.bfloat16,
+                buffer_dtype=torch.bfloat16,
+            )
+            cpu_offload = CPUOffload(offload_params=True) if args.fsdp_cpu_offload else None
+
+            model = FSDP(
+                model,
+                auto_wrap_policy=_fsdp_wrap_policy,
+                mixed_precision=mixed_precision,
+                cpu_offload=cpu_offload,
+                sharding_strategy=ShardingStrategy.FULL_SHARD,
+                backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+                device_id=device,
+                use_orig_params=True,
+            )
+        else:
+            if args.use_bn_sync:
+                model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+            ddp_args = {}
+            if args.ddp_static_graph:
+                # this doesn't exist in older PyTorch, arg only added if enabled
+                ddp_args['static_graph'] = True
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device], **ddp_args)
+
         if args.distill:
             dist_model = torch.nn.parallel.DistributedDataParallel(dist_model, device_ids=[device], **ddp_args)
 
@@ -357,9 +394,21 @@ def main(args):
             sd = checkpoint["state_dict"]
             if not args.distributed and next(iter(sd.items()))[0].startswith('module'):
                 sd = {k[len('module.'):]: v for k, v in sd.items()}
-            model.load_state_dict(sd)
+            if args.fsdp and args.distributed:
+                # FSDP needs FULL_STATE_DICT context to load unsharded weights,
+                # and re-sharding of optimizer states per rank
+                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                from torch.distributed.fsdp.api import StateDictType
+                with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT):
+                    model.load_state_dict(sd)
+            else:
+                model.load_state_dict(sd)
             if optimizer is not None:
-                optimizer.load_state_dict(checkpoint["optimizer"])
+                if args.fsdp and args.distributed:
+                    optim_state = FSDP.optim_state_dict_to_load(model, optimizer, checkpoint["optimizer"])
+                    optimizer.load_state_dict(optim_state)
+                else:
+                    optimizer.load_state_dict(checkpoint["optimizer"])
             if scaler is not None and 'scaler' in checkpoint:
                 scaler.load_state_dict(checkpoint['scaler'])
             logging.info(f"=> resuming checkpoint '{args.resume}' (epoch {start_epoch})")
@@ -463,12 +512,26 @@ def main(args):
 
         # Saving checkpoints.
         if args.save_logs:
-            checkpoint_dict = {
-                "epoch": completed_epoch,
-                "name": args.name,
-                "state_dict": original_model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-            }
+            if args.fsdp and args.distributed:
+                # FSDP: gather full state dict from all ranks before saving
+                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                from torch.distributed.fsdp.api import StateDictType
+                with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT):
+                    fsdp_state_dict = model.state_dict()
+                    fsdp_optim_state = FSDP.optim_state_dict(model, optimizer)
+                checkpoint_dict = {
+                    "epoch": completed_epoch,
+                    "name": args.name,
+                    "state_dict": fsdp_state_dict,
+                    "optimizer": fsdp_optim_state,
+                }
+            else:
+                checkpoint_dict = {
+                    "epoch": completed_epoch,
+                    "name": args.name,
+                    "state_dict": original_model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                }
             if scaler is not None:
                 checkpoint_dict["scaler"] = scaler.state_dict()
 

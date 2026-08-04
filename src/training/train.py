@@ -273,8 +273,10 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             accum_nounphrases, accum_nounphrases_indices = [], []
 
         # Note: we clamp to 4.6052 = ln(100), as in the original paper.
-        with torch.no_grad():
-            unwrap_model(model).logit_scale.clamp_(0, math.log(100))
+        # Skip under FSDP — scalar params are sharded, only the owning rank has them.
+        if not getattr(args, 'fsdp', False):
+            with torch.no_grad():
+                unwrap_model(model).logit_scale.clamp_(0, math.log(100))
 
         batch_time_m.update(time.time() - end)
         end = time.time()

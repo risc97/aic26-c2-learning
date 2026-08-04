@@ -40,7 +40,9 @@ DATASET_TYPE="cc3m_custom_np_pkl"
 # Performance optimizations (baked in)
 # ---------------------------------------------------------------------------
 NUM_WORKERS=4             # async CPU preprocessing — GPU never starved
-TORCH_COMPILE=1            # works with 256px + grad checkpointing on 16GB
+NPROC="${NPROC:-1}"       # number of GPUs (set in model config)
+FSDP="${FSDP:-0}"         # use FSDP instead of DDP (model config sets for big models)
+TORCH_COMPILE="${TORCH_COMPILE:-0}"   # off by default; incompatible with FSDP
 
 # ---------------------------------------------------------------------------
 # Run name (timestamped — re-runs never collide)
@@ -97,7 +99,7 @@ EOF
 echo "Notes saved to $RUN_DIR/notes.txt"
 
 PYTHONWARNINGS="ignore::FutureWarning" \
-torchrun --nproc_per_node 1 \
+/venv/main/bin/torchrun --nproc_per_node "$NPROC" \
     src/main.py \
     --model "$MODEL" \
     --pretrained "$PRETRAINED" \
@@ -130,4 +132,5 @@ torchrun --nproc_per_node 1 \
     --name "$RUN_NAME" \
     --log-every-n-steps 20 \
     --delete-previous-checkpoint \
+    $([ $FSDP -eq 1 ] && echo "--fsdp") \
     $([ $TORCH_COMPILE -eq 1 ] && echo "--torchcompile")
