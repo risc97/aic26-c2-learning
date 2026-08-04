@@ -233,6 +233,14 @@ _PE_CORE_L14_336 = dict(
     ),
 )
 
+_PE_CORE_G14_448 = dict(
+    timm_openclip=_pcfg(
+        hf_hub='timm/PE-Core-G-14-448/',
+        mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5),
+        interpolation="bilinear", resize_mode="squash",
+    ),
+)
+
 _VITH14 = dict(
     laion2b_s32b_b79k=_pcfg(hf_hub='laion/CLIP-ViT-H-14-laion2B-s32B-b79K/'),
 )
@@ -336,6 +344,7 @@ _PRETRAINED = {
     "ViT-L-14-quickgelu": _VITL14_quickgelu,
     "ViT-L-14-336": _VITL14_336,
     "PE-Core-L14-336": _PE_CORE_L14_336,
+    "PE-Core-G14-448": _PE_CORE_G14_448,
     "ViT-H-14": _VITH14,
     "ViT-H-14-quickgelu": _VITH14_quickgelu,
     "ViT-H-14-378-quickgelu": _VITH14_378_quickgelu,

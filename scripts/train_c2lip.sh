@@ -24,10 +24,10 @@ EPS=1e-6
 SEED=42
 
 # ---------------------------------------------------------------------------
-# C2LIP loss scales
+# C2LIP loss scales (model-specific — sourced from model config)
 # ---------------------------------------------------------------------------
-NPC_LOSS_SCALE=1.0
-XAC_LOSS_SCALE=0.01
+NPC_LOSS_SCALE="${NPC_LOSS_SCALE:-1.0}"
+XAC_LOSS_SCALE="${XAC_LOSS_SCALE:-0.01}"
 
 # ---------------------------------------------------------------------------
 # Data paths
