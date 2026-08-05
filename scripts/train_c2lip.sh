@@ -101,6 +101,7 @@ echo "Notes saved to $RUN_DIR/notes.txt"
 PYTHONWARNINGS="ignore::FutureWarning" \
 /venv/main/bin/torchrun --nproc_per_node "$NPROC" \
     src/main.py \
+    ${RESUME:+--resume ${RESUME}} \
     --model "$MODEL" \
     --pretrained "$PRETRAINED" \
     --precision "$PRECISION" \
