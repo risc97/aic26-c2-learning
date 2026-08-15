@@ -13,11 +13,13 @@ from .pos_embed import get_2d_sincos_pos_embed
 
 
 class LayerNormFp32(nn.LayerNorm):
-    """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
+    """Subclass torch's LayerNorm to handle fp16/bf16 (by casting to float32 and back)."""
 
     def forward(self, x: torch.Tensor):
         orig_type = x.dtype
-        x = F.layer_norm(x.to(torch.float32), self.normalized_shape, self.weight, self.bias, self.eps)
+        w = self.weight.float() if self.weight is not None else None
+        b = self.bias.float() if self.bias is not None else None
+        x = F.layer_norm(x.to(torch.float32), self.normalized_shape, w, b, self.eps)
         return x.to(orig_type)
 
 

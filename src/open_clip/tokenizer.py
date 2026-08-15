@@ -429,7 +429,7 @@ class HFTokenizer:
         assert context_length, 'Please set a valid context length in class init or call.'
 
         texts = [self.clean_fn(text) for text in texts]
-        input_ids = self.tokenizer.batch_encode_plus(
+        input_ids = self.tokenizer(
             texts,
             return_tensors='pt',
             max_length=context_length,

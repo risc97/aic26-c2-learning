@@ -166,3 +166,4 @@ data_dir/
 */logs/*
 models/
 checkpoints/
+data/

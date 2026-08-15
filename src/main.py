@@ -244,7 +244,12 @@ def main(args):
         output_dict=True,
         **model_kwargs,
     )
-    
+
+    # Note: --force-image-size works for models with RoPE-only position encoding
+    # (e.g. PE-L14). For models with learned absolute positions (PE-G14), changing
+    # resolution requires interpolating pos_embed + RoPE + patch_embed — those models
+    # are best trained at their native resolution or on GPUs with enough VRAM.
+
     if args.distill:
         #FIXME: support distillation with grad accum.
         assert args.accum_freq == 1
@@ -307,7 +312,8 @@ def main(args):
 
     if args.distributed and not args.horovod:
         if args.fsdp:
-            # FSDP requires uniform dtype and non-scalar params
+            # FSDP flat_param requires uniform dtype. Convert all params to bf16.
+            # LayerNormFp32 handles bf16→fp32 internally, so this is safe.
             for p in model.parameters():
                 p.data = p.data.to(torch.bfloat16)
                 if p.ndim == 0:
@@ -326,7 +332,7 @@ def main(args):
                 return isinstance(module, ResidualAttentionBlock)
 
             mixed_precision = MixedPrecision(
-                param_dtype=None,  # skip param recast — avoids fp32/bf16 flat_param errors
+                param_dtype=None,            # we already converted to bf16 above
                 reduce_dtype=torch.bfloat16,
                 buffer_dtype=torch.bfloat16,
             )

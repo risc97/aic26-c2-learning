@@ -126,12 +126,16 @@ PYTHONWARNINGS="ignore::FutureWarning" \
     --siglip \
     --output-tokens \
     --grad-checkpointing \
+    --ddp-static-graph \
     --npc-loss \
     --npc-loss-scale "$NPC_LOSS_SCALE" \
     --xac-loss \
     --xac-loss-scale "$XAC_LOSS_SCALE" \
     --name "$RUN_NAME" \
+    ${RESUME_CHECKPOINT:+--resume "$RESUME_CHECKPOINT"} \
     --log-every-n-steps 20 \
     --delete-previous-checkpoint \
+    ${FORCE_IMAGE_SIZE:+--force-image-size $FORCE_IMAGE_SIZE} \
     $([ $FSDP -eq 1 ] && echo "--fsdp") \
+    $([ ${FSDP_CPU_OFFLOAD:-0} -eq 1 ] && echo "--fsdp-cpu-offload") \
     $([ $TORCH_COMPILE -eq 1 ] && echo "--torchcompile")

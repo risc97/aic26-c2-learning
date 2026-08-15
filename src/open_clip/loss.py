@@ -850,8 +850,8 @@ class C2LIP_Loss(nn.Module):
         
         self.loss_feature_norm = loss_feature_norm
 
-        
-    def forward(self, 
+
+    def forward(self,
                 image_features, 
                 text_features, 
                 logit_scale, 
@@ -926,11 +926,13 @@ class C2LIP_Loss(nn.Module):
                 nounphrases_indices = all_gather_variable_size_tensor(nounphrases_indices, rank=self.rank, world_size=self.world_size, gather_indices=True)
             
             if self.npc_loss:
+                # Use all-gathered image features when nounphrases span multiple GPUs
+                img_feats = all_image_features if self.world_size > 1 else image_features
                 if self.loss_feature_norm:
                     normalized_nounphrases_features = F.normalize(nounphrases_features, dim=-1)
-                    logits_per_image = torch.matmul(image_features, normalized_nounphrases_features.t()) * logit_scale
+                    logits_per_image = torch.matmul(img_feats, normalized_nounphrases_features.t()) * logit_scale
                 else:
-                    logits_per_image = torch.matmul(image_features, nounphrases_features.t()) * logit_scale
+                    logits_per_image = torch.matmul(img_feats, nounphrases_features.t()) * logit_scale
                 if logit_bias is not None:
                     logits_per_image += logit_bias
                 labels = - torch.ones_like(logits_per_image)
@@ -943,6 +945,15 @@ class C2LIP_Loss(nn.Module):
             if self.xac_loss:
                 M = image_tokens.shape[0] # num of images
                 N = nounphrases_features.shape[0] # num of nounphrases
+                # Project vision tokens to text dim when they differ (e.g., G14: 1536→1280)
+                if image_tokens.shape[-1] != nounphrases_features.shape[-1]:
+                    if not hasattr(self, '_vis_proj_buf') or self._vis_proj_buf is None:
+                        vis_dim = image_tokens.shape[-1]
+                        txt_dim = nounphrases_features.shape[-1]
+                        w = torch.randn(txt_dim, vis_dim, device=image_tokens.device, dtype=image_tokens.dtype)
+                        w = w / (vis_dim ** 0.5)
+                        object.__setattr__(self, '_vis_proj_buf', w)
+                    image_tokens = F.linear(image_tokens, self._vis_proj_buf)
                 expanded_np_features = nounphrases_features.unsqueeze(1) # (N, 1, feat_dim)
                 
                 logits = []
